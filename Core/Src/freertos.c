@@ -62,10 +62,9 @@ osStaticMessageQDef_t qadc_dataControlBlock;
 
 /* USER CODE END FunctionPrototypes */
 
-void tastk_adc_data_entry(void const * argument);
+void task_adc_data_entry(void const * argument);
 void task_gui_out_entry(void const * argument);
 
-extern void MX_USB_HOST_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* GetIdleTaskMemory prototype (linked to static allocation support) */
@@ -162,7 +161,7 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* definition and creation of task_adc_data */
-  osThreadStaticDef(task_adc_data, tastk_adc_data_entry, osPriorityAboveNormal, 0, 4096, task_adc_dataBuffer, &task_adc_dataControlBlock);
+  osThreadStaticDef(task_adc_data, task_adc_data_entry, osPriorityAboveNormal, 0, 4096, task_adc_dataBuffer, &task_adc_dataControlBlock);
   task_adc_dataHandle = osThreadCreate(osThread(task_adc_data), NULL);
 
   /* definition and creation of task_gui_out */
@@ -175,24 +174,22 @@ void MX_FREERTOS_Init(void) {
 
 }
 
-/* USER CODE BEGIN Header_tastk_adc_data_entry */
+/* USER CODE BEGIN Header_task_adc_data_entry */
 /**
   * @brief  Function implementing the task_adc_data thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_tastk_adc_data_entry */
-__weak void tastk_adc_data_entry(void const * argument)
+/* USER CODE END Header_task_adc_data_entry */
+__weak void task_adc_data_entry(void const * argument)
 {
-  /* init code for USB_HOST */
-  MX_USB_HOST_Init();
-  /* USER CODE BEGIN tastk_adc_data_entry */
+  /* USER CODE BEGIN task_adc_data_entry */
   /* Infinite loop */
   for(;;)
   {
     osDelay(1);
   }
-  /* USER CODE END tastk_adc_data_entry */
+  /* USER CODE END task_adc_data_entry */
 }
 
 /* USER CODE BEGIN Header_task_gui_out_entry */
@@ -202,7 +199,7 @@ __weak void tastk_adc_data_entry(void const * argument)
 * @retval None
 */
 /* USER CODE END Header_task_gui_out_entry */
-void task_gui_out_entry(void const * argument)
+__weak void task_gui_out_entry(void const * argument)
 {
   /* USER CODE BEGIN task_gui_out_entry */
   /* Infinite loop */
