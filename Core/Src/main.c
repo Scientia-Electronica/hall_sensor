@@ -74,7 +74,17 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// print via uart
+_ssize_t _write_r(struct _reent *ptr, /* Don't worry about what's in this for the simple case */
+                  int fd, /* ignored */
+                  const void* buf, /* the data to be sent out the UART */
+                  size_t      cnt) /* the number of bytes to be sent */
+{
 
+   HAL_UART_Transmit(&huart1, (uint8_t*)buf, cnt, 10000);
+
+   return (_ssize_t)cnt;
+}
 /* USER CODE END 0 */
 
 /**

@@ -54,7 +54,7 @@ osThreadId task_gui_outHandle;
 uint32_t task_gui_outBuffer[ 4096 ];
 osStaticThreadDef_t task_gui_outControlBlock;
 osMessageQId qadc_dataHandle;
-uint8_t qadc_dataBuffer[ 1024 * sizeof( uint16_t ) ];
+uint8_t qadc_dataBuffer[ 1024 * sizeof( uint32_t ) ];
 osStaticMessageQDef_t qadc_dataControlBlock;
 
 /* Private function prototypes -----------------------------------------------*/
@@ -152,7 +152,7 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the queue(s) */
   /* definition and creation of qadc_data */
-  osMessageQStaticDef(qadc_data, 1024, uint16_t, qadc_dataBuffer, &qadc_dataControlBlock);
+  osMessageQStaticDef(qadc_data, 1024, uint32_t, qadc_dataBuffer, &qadc_dataControlBlock);
   qadc_dataHandle = osMessageCreate(osMessageQ(qadc_data), NULL);
 
   /* USER CODE BEGIN RTOS_QUEUES */
