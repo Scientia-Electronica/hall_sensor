@@ -9,170 +9,177 @@
 #include "ltdc.h"
 #include "cmsis_os.h"
 #include "fmc.h"
+#include "dma2d.h"
 #include <stdlib.h>
-
+#include <string.h>
 
 extern osMessageQId qadc_dataHandle;
 
 static FMC_SDRAM_CommandTypeDef command;
 static void BSP_SDRAM_Initialization_Sequence(SDRAM_HandleTypeDef *hsdram, FMC_SDRAM_CommandTypeDef *Command);
 
-#define DIAGRAM_ARR_SZ			480
-const uint16_t ALMOST_BLACK_COL = 0x3081;
-const uint16_t GREEN_COL = 0x33eb;
-/**
- * fill background
- */
-void lcd_background(uint16_t color)
-{
-	uint32_t n = hltdc.LayerCfg[0].ImageHeight * hltdc.LayerCfg[0].ImageWidth;
-		for (int i = 0; i < n; i++) {
-			*(__IO uint16_t*) (hltdc.LayerCfg[0].FBStartAdress + (i * 2)) =
-					(uint16_t) color;
-		}
-}
-void lcd_col(uint16_t offset, uint16_t color, uint32_t vert_start, uint32_t vert_end)
-{
-	uint32_t h = hltdc.LayerCfg[0].ImageHeight;
-	uint32_t w = hltdc.LayerCfg[0].ImageWidth;
+#define DIAGRAM_WIDTH           480
+#define DIAGRAM_HEIGHT          272
+#define DIAGRAM_BUF_SIZE        DIAGRAM_WIDTH
+#define COLOR_BACKGROUND        0x3081
+#define COLOR_FOREGROUND        0x33EB
 
-		for (int i = vert_start; i < vert_end; i++) {
-			*(__IO uint16_t*) (hltdc.LayerCfg[0].FBStartAdress + (2*(offset+i * w))) =
-					(uint16_t) color;
-		}
-}
+#define FB1_ADDR                ((uint32_t)0xC0000000)
+#define FB2_ADDR                ((uint32_t)0xC0100000)
 
-void lcd_diag_item(uint16_t offset, int item, uint16_t color)
+static uint32_t fb_front = FB1_ADDR;
+static uint32_t fb_back  = FB2_ADDR;
+
+static int16_t diagram_data[DIAGRAM_BUF_SIZE];
+static int diagram_head = 0;
+
+extern DMA2D_HandleTypeDef hdma2d;
+static void lcd_swap_buffers(void);
+static void lcd_clear_fb(uint32_t addr, uint16_t color);
+
+static void dma2d_fill_rect(uint32_t dst_addr, uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
-	uint32_t h = hltdc.LayerCfg[0].ImageHeight;
-		uint32_t w = hltdc.LayerCfg[0].ImageWidth;
-	int item_sz = abs(item);
-	uint32_t vert_start, vert_end;
-	if(item<0) {
-		vert_start = h / 2;
-		vert_end = h / 2 + item_sz;
-	} else {
-		vert_end = h / 2;
-		vert_start = h / 2 - item_sz;
-		if(vert_start<0)
-			vert_start = 0;
-	}
-	lcd_col(offset, color, vert_start, vert_end);
+    HAL_DMA2D_DeInit(&hdma2d);
+    hdma2d.Init.Mode = DMA2D_R2M;
+    hdma2d.Init.ColorMode = DMA2D_OUTPUT_RGB565;
+    hdma2d.Init.OutputOffset = DIAGRAM_WIDTH - w;
+    HAL_DMA2D_Init(&hdma2d);
+
+    HAL_DMA2D_Start(&hdma2d, color, dst_addr + 2 * (x + y * DIAGRAM_WIDTH), w, h);
+    HAL_DMA2D_PollForTransfer(&hdma2d, HAL_MAX_DELAY);
 }
 
-void lcd_diagram(int offs, int*arr, size_t sz, const uint16_t color)
-{
 
-	uint32_t h = hltdc.LayerCfg[0].ImageHeight;
-	uint32_t w = hltdc.LayerCfg[0].ImageWidth;
-	// find max in arr
-	int i, max, min;
-	for(max = arr[0], min = arr[0], i=0; i<sz; i++) {
-		if(arr[i] > max)
-			max = arr[i];
-		if(arr[i] < min)
-			min  = arr[i];
-	}
-	static uint8_t firsttime=1;
-	static int nmax;
-	if(firsttime) {
-		nmax = (abs(min) > abs(max))?abs(min):abs(max);
-		firsttime = 0;
-	}
-	for(int i=0; i<sz; i++) {
-		int rec_item = (int)h * arr[i] / nmax /2;
-		lcd_diag_item(offs+i, rec_item, color);
-		lcd_diag_item(offs+1+i, rec_item, color);
-	}
+static void lcd_draw_diagram(uint32_t fb)
+{
+    // Ensure previous DMA2D operation is complete before starting a new one
+    while (HAL_DMA2D_GetState(&hdma2d) != HAL_DMA2D_STATE_READY) {
+        osDelay(1);  // Delay to avoid tight looping
+    }
+
+    // Clear the framebuffer once before starting the diagram drawing
+    lcd_clear_fb(fb, COLOR_BACKGROUND);
+
+    int max_val = 1;
+    for (int i = 0; i < DIAGRAM_BUF_SIZE; ++i) {
+        int abs_val = abs(diagram_data[i]);
+        if (abs_val > max_val) max_val = abs_val;
+    }
+
+    // Draw the diagram after clearing
+    for (int i = 0; i < DIAGRAM_BUF_SIZE; ++i) {
+        int idx = (diagram_head + i) % DIAGRAM_BUF_SIZE;
+        int val = diagram_data[idx];
+
+        int height = (val * (DIAGRAM_HEIGHT / 2)) / max_val;
+        int x = i;
+        int y = (height > 0) ? (DIAGRAM_HEIGHT / 2 - height) : (DIAGRAM_HEIGHT / 2);
+        int h = abs(height);
+
+        if (x < DIAGRAM_WIDTH && y >= 0 && y + h <= DIAGRAM_HEIGHT) {
+            while (HAL_DMA2D_GetState(&hdma2d) != HAL_DMA2D_STATE_READY) {
+                osDelay(1);  // Delay to avoid tight looping
+            }
+
+            // Draw the diagram using DMA2D
+            dma2d_fill_rect(fb, COLOR_FOREGROUND, x, y, 1, h);
+        }
+    }
+
+    // Ensure DMA2D is ready before swapping buffers
+    while (HAL_DMA2D_GetState(&hdma2d) != HAL_DMA2D_STATE_READY) {
+        osDelay(1);  // Optional delay to avoid tight looping
+    }
+
+    // Swap buffers only after the entire drawing is completed
+    lcd_swap_buffers();
 }
 
+static void lcd_swap_buffers(void)
+{
+    // Wait for LTDC layer to be ready
+    while (__HAL_LTDC_GET_FLAG(&hltdc, LTDC_FLAG_RR)) {
+        osDelay(1);  // Wait for Reload to complete (ensuring no flicker during transition)
+    }
+
+    // Ensure DMA2D operation has fully completed before swapping buffers
+    while (HAL_DMA2D_GetState(&hdma2d) != HAL_DMA2D_STATE_READY) {
+        osDelay(1);  // Ensure the drawing is finished
+    }
+
+    // Swap the front and back frame buffers
+    uint32_t tmp = fb_front;
+    fb_front = fb_back;
+    fb_back = tmp;
+
+    // Update the LTDC layer to point to the new front buffer
+    __HAL_LTDC_LAYER(&hltdc, 0)->CFBAR = fb_front;  // Set the front buffer for LTDC to display
+    __HAL_LTDC_RELOAD_CONFIG(&hltdc);  // Reload LTDC config to apply the new front buffer
+}
+
+static void lcd_clear_fb(uint32_t addr, uint16_t color)
+{
+    // Wait for DMA2D to be ready before clearing the framebuffer
+    while (HAL_DMA2D_GetState(&hdma2d) != HAL_DMA2D_STATE_READY) {
+        osDelay(1);
+    }
+
+    dma2d_fill_rect(addr, color, 0, 0, DIAGRAM_WIDTH, DIAGRAM_HEIGHT);
+}
 void task_gui_out_entry(void const * argument)
 {
-	osEvent event;
-	uint16_t sensor_adc_data[2];
-	int16_t sensor_adc_data_diff;
-	static int diagram_sensor_adc_diffs[DIAGRAM_ARR_SZ];
-	// setup SDRAM
-	BSP_SDRAM_Initialization_Sequence(&hsdram1, &command);
-	lcd_background(ALMOST_BLACK_COL);
+    osEvent event;
+    uint16_t sensor_adc_data[2];
+    int16_t sensor_adc_data_diff;
 
-	while(1) {
-		event = osMessageGet(qadc_dataHandle, 10);
-		if(event.status == osEventMessage){
-			lcd_background(ALMOST_BLACK_COL);
-			sensor_adc_data[0] = (uint16_t)event.value.v;
-			sensor_adc_data[1] = (uint16_t)(event.value.v>>16);
-			sensor_adc_data_diff = (int16_t)sensor_adc_data[0] - (int16_t)sensor_adc_data[1];
-			//printf("sensoradc: %d\n\r", sensor_adc_data_diff);
-			for(int i=0; i<DIAGRAM_ARR_SZ - 1; i++) {
-				diagram_sensor_adc_diffs[i] = diagram_sensor_adc_diffs[i+1];
-			}
-			diagram_sensor_adc_diffs[DIAGRAM_ARR_SZ - 1] = sensor_adc_data_diff;
-			lcd_diagram(0, diagram_sensor_adc_diffs, DIAGRAM_ARR_SZ, GREEN_COL);
-		}
-		osDelay(1);
-	}
+    BSP_SDRAM_Initialization_Sequence(&hsdram1, &command);
+    lcd_clear_fb(fb_front, COLOR_BACKGROUND);
+    lcd_clear_fb(fb_back, COLOR_BACKGROUND);
+    __HAL_LTDC_LAYER(&hltdc, 0)->CFBAR = fb_front;
+    __HAL_LTDC_RELOAD_CONFIG(&hltdc);
+
+    while (1) {
+        event = osMessageGet(qadc_dataHandle, 10);
+        if (event.status == osEventMessage) {
+            sensor_adc_data[0] = (uint16_t)event.value.v;
+            sensor_adc_data[1] = (uint16_t)(event.value.v >> 16);
+            sensor_adc_data_diff = (int16_t)sensor_adc_data[0] - (int16_t)sensor_adc_data[1];
+
+            diagram_data[diagram_head] = sensor_adc_data_diff;
+            diagram_head = (diagram_head + 1) % DIAGRAM_BUF_SIZE;
+
+            lcd_draw_diagram(fb_back);
+        }
+        osDelay(1);
+    }
 }
 
-
-/**
-  * @brief  Perform the SDRAM external memory initialization sequence
-  * @param  hsdram: SDRAM handle
-  * @param  Command: Pointer to SDRAM command structure
-  * @retval None
-  */
 static void BSP_SDRAM_Initialization_Sequence(SDRAM_HandleTypeDef *hsdram, FMC_SDRAM_CommandTypeDef *Command)
 {
-  __IO uint32_t tmpmrd =0;
-  /* Step 3:  Configure a clock configuration enable command */
-  Command->CommandMode = FMC_SDRAM_CMD_CLK_ENABLE;
-  Command->CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
-  Command->AutoRefreshNumber = 1;
-  Command->ModeRegisterDefinition = 0;
+    __IO uint32_t tmpmrd =0;
+    Command->CommandMode = FMC_SDRAM_CMD_CLK_ENABLE;
+    Command->CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    Command->AutoRefreshNumber = 1;
+    Command->ModeRegisterDefinition = 0;
+    HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
+    osDelay(1);
 
-  /* Send the command */
-  HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
+    Command->CommandMode = FMC_SDRAM_CMD_PALL;
+    HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
 
-  /* Step 4: Insert 100 us minimum delay */
-  /* Inserted delay is equal to 1 ms due to systick time base unit (ms) */
-  osDelay(1);
+    Command->CommandMode = FMC_SDRAM_CMD_AUTOREFRESH_MODE;
+    Command->AutoRefreshNumber = 8;
+    HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
 
-  /* Step 5: Configure a PALL (precharge all) command */
-  Command->CommandMode = FMC_SDRAM_CMD_PALL;
-  Command->CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
-  Command->AutoRefreshNumber = 1;
-  Command->ModeRegisterDefinition = 0;
+    tmpmrd = (uint32_t)SDRAM_MODEREG_BURST_LENGTH_1 |
+                      SDRAM_MODEREG_BURST_TYPE_SEQUENTIAL |
+                      SDRAM_MODEREG_CAS_LATENCY_2 |
+                      SDRAM_MODEREG_OPERATING_MODE_STANDARD |
+                      SDRAM_MODEREG_WRITEBURST_MODE_SINGLE;
 
-  /* Send the command */
-  HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
+    Command->CommandMode = FMC_SDRAM_CMD_LOAD_MODE;
+    Command->ModeRegisterDefinition = tmpmrd;
+    HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
 
-  /* Step 6 : Configure a Auto-Refresh command */
-  Command->CommandMode = FMC_SDRAM_CMD_AUTOREFRESH_MODE;
-  Command->CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
-  Command->AutoRefreshNumber = 8;
-  Command->ModeRegisterDefinition = 0;
-
-  /* Send the command */
-  HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
-
-  /* Step 7: Program the external memory mode register */
-  tmpmrd = (uint32_t)SDRAM_MODEREG_BURST_LENGTH_1          |
-                     SDRAM_MODEREG_BURST_TYPE_SEQUENTIAL   |
-                     SDRAM_MODEREG_CAS_LATENCY_2           |
-                     SDRAM_MODEREG_OPERATING_MODE_STANDARD |
-                     SDRAM_MODEREG_WRITEBURST_MODE_SINGLE;
-
-  Command->CommandMode = FMC_SDRAM_CMD_LOAD_MODE;
-  Command->CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
-  Command->AutoRefreshNumber = 1;
-  Command->ModeRegisterDefinition = tmpmrd;
-
-  /* Send the command */
-  HAL_SDRAM_SendCommand(hsdram, Command, SDRAM_TIMEOUT);
-
-  /* Step 8: Set the refresh rate counter */
-  /* (15.62 us x Freq) - 20 */
-  /* Set the device refresh counter */
-  hsdram->Instance->SDRTR |= ((uint32_t)((1292)<< 1));
-
+    hsdram->Instance->SDRTR |= ((uint32_t)((1292)<< 1));
 }

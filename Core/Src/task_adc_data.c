@@ -23,7 +23,7 @@ void task_adc_data_entry(void const * argument)
 			__enable_irq();
 			HAL_ADC_Start_DMA(&hadc3, (uint32_t*)sensor_adc_data, sizeof sensor_adc_data / sizeof (uint16_t));
 		}
-		osDelay(120);
+		osDelay(33);
 	}
 }
 
