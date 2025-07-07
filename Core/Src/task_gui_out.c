@@ -17,12 +17,12 @@ static void BSP_SDRAM_Initialization_Sequence(SDRAM_HandleTypeDef *hsdram, FMC_S
 void task_gui_out_entry(void const * argument)
 {
 	// setup SDRAM
-	BSP_SDRAM_Initialization_Sequence(&hsdram1, &command);
-	for(int i=0; i<hltdc.LayerCfg[0].ImageHeight * hltdc.LayerCfg[0].ImageWidth; i++)
-	{
-		__IO uint16_t* addr = (__IO uint16_t *)(hltdc.LayerCfg[0].FBStartAdress + i * 2);
-		*addr = 0x5f80;
-	}
+	//BSP_SDRAM_Initialization_Sequence(&hsdram1, &command);
+	//for(int i=0; i<hltdc.LayerCfg[0].ImageHeight * hltdc.LayerCfg[0].ImageWidth; i++)
+	//{
+	//	__IO uint16_t* addr = (__IO uint16_t *)(hltdc.LayerCfg[0].FBStartAdress + i * 2);
+	//	*addr = 0x5f80;
+	//}
 	while(1)
 	{
 		osDelay(1);

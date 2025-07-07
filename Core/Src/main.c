@@ -40,7 +40,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <reent.h>
+#include <core_cm7.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -74,7 +76,12 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+_ssize_t _write_r(struct _reent *ptr,
+		          int fd, const void *buf, size_t cnt)
+{
+	HAL_UART_Transmit(&huart1, (uint8_t*)buf, cnt, 10000);
+	return (_ssize_t)cnt;
+}
 /* USER CODE END 0 */
 
 /**
@@ -135,6 +142,10 @@ int main(void)
   MX_USB_OTG_FS_HCD_Init();
   /* USER CODE BEGIN 2 */
 
+	uint32_t cpuid = SCB->CPUID;
+	uint32_t variant = (cpuid >> 20) & 0xF;
+	uint32_t revision = cpuid & 0xF;
+	printf("cortex-m7 variant: r%lup%lu\n", variant, revision);
   /* USER CODE END 2 */
 
   /* Call init function for freertos objects (in cmsis_os2.c) */
